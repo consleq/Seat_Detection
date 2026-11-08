@@ -8,7 +8,7 @@
 - Python `3.14.3`
 - OpenCV `5.0.0.93`（套件名稱為 `opencv-python`）
 - Ultralytics `8.4.198`
-- 模型 `yolov8n.pt`
+- 姿勢模型 `yolov8n-pose.pt`
 
 在專案資料夾開啟 PowerShell，建立虛擬環境並安裝套件。
 
@@ -26,6 +26,6 @@ python -m pip install opencv-python==5.0.0.93 ultralytics==8.4.198
 
 相機預設使用編號 `1`。若要更換相機，修改 `seat_selector.py` 的 `CAMERA_ID`，`main.py` 會共用此設定。`camera_test.py` 的相機編號需在該檔案內另行修改。
 
-預設人體外框覆蓋座位達 30% 並持續 2 秒時標示占用，連續 5 秒未達門檻時標示空位。
+`main.py` 使用 YOLO 姿勢模型；判斷集中在 `pose_seat_detection.py` 的 `evaluate_seat_occupancy`：1. 辨識出所有人；2. 由胸口高度（左右肩中點，高於座位 ROI 上緣超過 ROI 高度 25% 視為站姿）及姿勢關節（`is_standing`）先排除站姿的人；3. 坐姿的人以人體框與座位 ROI 的 IoU 決定坐哪張椅子（IoU ≥ `IOU_THRESHOLD`）。座位有人持續 2 秒時標示占用，連續 5 秒無人時標示空位。畫面中灰色細框為站姿、藍框為坐姿，紫色點表示胸口位置。
 
 另外pose_seat_detection.py是之前mofish給的colab範例改成python的
