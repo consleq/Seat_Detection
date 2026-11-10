@@ -18,7 +18,7 @@ import cv2
 CAMERA_ID = 1  # 相機編號, main.py 也會用這個設定
 FRAME_WIDTH = 640  # 向相機要求的解析度, 實際值仍以讀到的影格為準
 FRAME_HEIGHT = 480
-# __file__ 是本程式路徑, 設定檔固定放在本程式旁邊
+# __file__ 是本程式路徑, seats.json固定放在與本程式同個資料夾
 OUTPUT_PATH = Path(__file__).resolve().with_name("seats.json")
 
 WINDOW = "Seat ROI Selector"
@@ -26,7 +26,7 @@ MIN_SIZE = 10  # 矩形的寬與高至少 10 像素, 避免誤點產生太小的
 
 
 def load_seats(path, width, height):
-    """載入座位並檢查格式, 此函式也會由 main.py 使用."""
+    """載入座位並檢查格式, 此函式也會由 main.py 使用"""
     # 尚未建立設定檔時, 回傳空清單供使用者新增座位
     if not path.exists():
         return []
@@ -38,15 +38,15 @@ def load_seats(path, width, height):
     seats = data["seats"]
     if not isinstance(seats, list):
         raise ValueError("seats 必須是清單。")
-    # set 用來記錄出現過的編號, 避免重複
-    ids = set()
+    
+    ids = set() # set 用來記錄出現過的編號, 避免重複
     for seat in seats:
         seat_id = seat["id"]
         if not isinstance(seat_id, str) or not seat_id or seat_id in ids:
             raise ValueError("座位編號必須是非空白且不重複的字串。")
         ids.add(seat_id)
-        # 每個矩形包含 4 個 [x, y], x 向右增加, y 向下增加
-        points = seat["points"]
+        
+        points = seat["points"] # 每個point包含 4 個 [x, y], x 向右增加, y 向下增加
         if not isinstance(points, list) or len(points) != 4:
             raise ValueError("每個座位必須包含四個角落。")
         for point in points:
@@ -93,14 +93,12 @@ def main():
             # 將滑鼠座標限制在有效影像範圍內
             point = (max(0, min(x, width - 1)), max(0, min(y, height - 1)))
             if event == cv2.EVENT_LBUTTONDOWN:
-                # 按下左鍵時開始記錄矩形
                 drag["start"] = point
                 drag["end"] = point
             elif event == cv2.EVENT_MOUSEMOVE and drag["start"] is not None:
-                # 拖曳中只更新預覽終點, 尚未新增座位
                 drag["end"] = point
             elif event == cv2.EVENT_LBUTTONUP and drag["start"] is not None:
-                # 放開左鍵才完成框選, sorted 讓反方向拖曳也能得到左上與右下
+                # sorted 讓不管怎麼拖也能得到左上與右下
                 x1, x2 = sorted((drag["start"][0], point[0]))
                 y1, y2 = sorted((drag["start"][1], point[1]))
                 drag["start"] = drag["end"] = None
@@ -110,7 +108,7 @@ def main():
                 # 從 S01 起尋找未使用的編號, :02d 表示至少兩位數並補零
                 used = {seat["id"] for seat in seats}
                 number = 1
-                while f"S{number:02d}" in used:
+                while f"S{number:02d}" in used: # 字串格式化
                     number += 1
                 seat = {"id": f"S{number:02d}",
                         "points": [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]}

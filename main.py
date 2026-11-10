@@ -23,9 +23,8 @@ WINDOW = "Restaurant Seat Detection"
 
 def coverage(points, person_boxes):
     """取單一人體外框覆蓋座位 ROI 的最大比例, 非 IoU"""
-    # points[0] 是左上角, points[2] 是右下角
-    x1, y1 = points[0]
-    x2, y2 = points[2]
+    x1, y1 = points[0] #左上角
+    x2, y2 = points[2] #右下角
     area = (x2 - x1) * (y2 - y1)
     best = 0.0
     for px1, py1, px2, py2 in person_boxes:
@@ -139,7 +138,7 @@ def main():
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 160, 0), 1)
 
             for seat, state in zip(seats, states):
-                # 6. zip 將座位與其狀態配對, 分別計算覆蓋率並更新計時
+                # 6. zip 將seats跟states打包成tuple, 分別計算覆蓋率並更新計時
                 ratio = coverage(seat["points"], boxes)
                 state.update(ratio >= args.overlap, now,
                              args.occupy_seconds, args.empty_seconds)
@@ -163,8 +162,14 @@ def main():
 
             # 7. 只把確認為 False 的座位計入空位, None 不算空位
             # 同一人體可能覆蓋多個 ROI, 所以占用座位數不等於人數
-            available = sum(state.occupied is False for state in states)
-            occupied = sum(state.occupied is True for state in states)
+            available = 0
+            for state in states:
+                if state.occupied is False:
+                    available += 1
+            occupied = 0
+            for state in states:
+                if state.occupied is True:
+                    occupied += 1
             unknown = len(seats) - available - occupied
             cv2.putText(frame, f"Available: {available}/{len(seats)}  Occupied: {occupied}  Checking: {unknown}",
                         (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
