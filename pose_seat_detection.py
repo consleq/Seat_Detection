@@ -14,6 +14,8 @@ STAND_HIP_CHAIR_HEIGHT_RATIO = 0.55
 STAND_NECK_KNEE_RATIO = 1.8
 CHEST_KEYPOINT_CONF = 0.4
 IOU_THRESHOLD = 0.25
+# 人體框與座位框的交集面積 / 座位面積 >= 此值才算坐在該座位
+SEAT_OVERLAP_THRESHOLD = 0.25
 
 
 def compute_iou(box_a, box_b):
@@ -28,6 +30,19 @@ def compute_iou(box_a, box_b):
     area_a = (box_a[2] - box_a[0]) * (box_a[3] - box_a[1])
     area_b = (box_b[2] - box_b[0]) * (box_b[3] - box_b[1])
     return inter / (area_a + area_b - inter)
+
+
+def seat_overlap_ratio(person_box, seat_box_):
+    """回傳人體框與座位框的交集面積 / 座位面積（0~1）。"""
+    ix1 = max(person_box[0], seat_box_[0])
+    iy1 = max(person_box[1], seat_box_[1])
+    ix2 = min(person_box[2], seat_box_[2])
+    iy2 = min(person_box[3], seat_box_[3])
+    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+    seat_area = (seat_box_[2] - seat_box_[0]) * (seat_box_[3] - seat_box_[1])
+    if inter == 0 or seat_area <= 0:
+        return 0.0
+    return inter / seat_area
 
 
 def joint_angle(a, b, c):
@@ -107,20 +122,8 @@ def is_standing(kpts, conf, person_box=None, chair_box=None, chest_outside=False
             if torso > 0 and thigh_v / torso >= STAND_THIGH_RATIO:
                 return True
 
-    # 若所有腳踝都不可見，則以大腿與軀幹比例為判斷條件
+    # 若所有腳踝都不可見，則參考椅子的相對高度
     if not any(ok(ankle) for _, _, ankle, _ in sides):
-        thigh_ratios = []
-        for hip, knee, _, shoulder in sides:
-            if not (ok(hip) and ok(knee) and ok(shoulder)):
-                break
-            torso = kpts[hip][1] - kpts[shoulder][1]
-            thigh_v = kpts[knee][1] - kpts[hip][1]
-            if torso <= 0 or thigh_v <= 0:
-                break
-            thigh_ratios.append(thigh_v / torso)
-        if len(thigh_ratios) == len(sides) and min(thigh_ratios) >= 0.65:
-            return True
-
         if chair_box is not None and person_box is not None:
             chair_height = chair_box[3] - chair_box[1]
             person_height = person_box[3] - person_box[1]
@@ -168,9 +171,14 @@ def seat_box(points):
 
 
 def chest_outside_seat(chest, box):
-    """胸口不在對應座位 ROI 內時回傳 True（站姿）。胸口不可信時回傳 False。"""
+    """胸口不在對應座位 ROI 內時回傳 True（站姿）。胸口不可信時回傳 False。
+
+    box 為 None 代表人體框與所有座位 ROI 都沒有重疊，胸口必然在 ROI 外。
+    """
     if chest is None:
         return False
+    if box is None:
+        return True
     x, y = chest
     return not (box[0] <= x <= box[2] and box[1] <= y <= box[3])
 
@@ -199,7 +207,7 @@ def evaluate_seat_occupancy(seats, boxes, keypoints, confidences):
             confidences[index]
             if confidences is not None and index < len(confidences) else None
         )
-        chest_out = related_seat is not None and chest_outside_seat(chest, related_seat)
+        chest_out = chest_outside_seat(chest, related_seat)
         if len(kpts) > 16:
             standing.append(
                 is_standing(kpts, conf, person_box, related_seat, chest_out)
@@ -208,19 +216,19 @@ def evaluate_seat_occupancy(seats, boxes, keypoints, confidences):
             # 關節點不足時只能靠胸口位置判斷
             standing.append(chest_out)
 
-    # 3. 坐姿的人與座位 ROI 計算 IoU, 取最大且超過門檻的座位
+    # 3. 坐姿的人與座位 ROI 計算「交集面積 / 座位面積」, 取最大且超過門檻的座位
     detected = [False] * len(seats)
     for index, person_box in enumerate(boxes):
         if standing[index]:
             continue
-        best_iou = 0.0
+        best_overlap = 0.0
         best_seat = -1
         for seat_index, box in enumerate(seat_boxes):
-            iou = compute_iou(person_box, box)
-            if iou > best_iou:
-                best_iou = iou
+            overlap = seat_overlap_ratio(person_box, box)
+            if overlap > best_overlap:
+                best_overlap = overlap
                 best_seat = seat_index
-        if best_seat >= 0 and best_iou >= IOU_THRESHOLD:
+        if best_seat >= 0 and best_overlap >= SEAT_OVERLAP_THRESHOLD:
             detected[best_seat] = True
     return chests, detected, standing
 
