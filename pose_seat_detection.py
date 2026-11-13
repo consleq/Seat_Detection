@@ -8,8 +8,6 @@ import numpy as np
 KPT_CONF_TH = 0.4
 STAND_KNEE_ANGLE = 160
 STAND_THIGH_RATIO = 0.8
-STAND_PERSON_CHAIR_HEIGHT_RATIO = 1.5
-STAND_HIP_CHAIR_HEIGHT_RATIO = 0.55
 # 脖子到膝蓋距離 / 脖子到髖部距離 >= 此值視為站姿（坐姿約 1.0~1.3，站姿約 1.8~2.0）
 STAND_NECK_KNEE_RATIO = 1.8
 CHEST_KEYPOINT_CONF = 0.4
@@ -89,7 +87,7 @@ def is_standing_by_neck_knee(kpts, conf, ratio_th=STAND_NECK_KNEE_RATIO):
 
 
 def is_standing(kpts, conf, person_box=None, chair_box=None, chest_outside=False):
-    """依關節點判斷站姿；腳踝不可見時可參考附近椅子的相對高度。"""
+    """依膝蓋角度與距離比、胸口位置、大腿與軀幹比例判斷站姿。"""
 
     def ok(index):
         return conf is None or conf[index] >= KPT_CONF_TH
@@ -122,20 +120,6 @@ def is_standing(kpts, conf, person_box=None, chair_box=None, chest_outside=False
             if torso > 0 and thigh_v / torso >= STAND_THIGH_RATIO:
                 return True
 
-    # 若所有腳踝都不可見，則參考椅子的相對高度
-    if not any(ok(ankle) for _, _, ankle, _ in sides):
-        if chair_box is not None and person_box is not None:
-            chair_height = chair_box[3] - chair_box[1]
-            person_height = person_box[3] - person_box[1]
-            visible_hips = [kpts[hip][1] for hip, _, _, _ in sides if ok(hip)]
-            if (
-                chair_height > 0
-                and visible_hips
-                and person_height / chair_height >= STAND_PERSON_CHAIR_HEIGHT_RATIO
-                and np.mean(visible_hips)
-                <= chair_box[1] + chair_height * STAND_HIP_CHAIR_HEIGHT_RATIO
-            ):
-                return True
     return False
 
 

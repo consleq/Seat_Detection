@@ -4,3 +4,4 @@ seats.json
 Seat ROI Selector.png
 pose_seat_detection_backup.py
 backup_before_flow/
+yolov8n-pose.pt
