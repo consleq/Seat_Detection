@@ -17,10 +17,18 @@ import cv2
 
 # 共用相機編號, 設定檔位置和座位驗證函式, 匯入時不會啟動框選視窗
 from seat_selector import CAMERA_ID, OUTPUT_PATH, load_seats
-from pose_seat_detection import SeatState, evaluate_seat_occupancy
+from pose_seat_detection import KPT_CONF_TH, SeatState, evaluate_seat_occupancy
 
 
 WINDOW = "Restaurant Seat Detection"
+JOINT_MARKERS = (
+    (11, "L Hip", (0, 255, 255)),
+    (12, "R Hip", (0, 255, 255)),
+    (13, "L Knee", (0, 165, 255)),
+    (14, "R Knee", (0, 165, 255)),
+    (15, "L Ankle", (0, 0, 255)),
+    (16, "R Ankle", (0, 0, 255)),
+)
 
 
 def parse_args():
@@ -122,6 +130,28 @@ def main():
                     continue
                 chest_x, chest_y = chest
                 cv2.circle(frame, (round(chest_x), round(chest_y)), 4, (255, 0, 255), -1)
+
+            for person_index, person_keypoints in enumerate(keypoints):
+                person_confidences = (
+                    confidences[person_index]
+                    if confidences is not None and person_index < len(confidences)
+                    else None
+                )
+                for joint_index, label, color in JOINT_MARKERS:
+                    if joint_index >= len(person_keypoints):
+                        continue
+                    if person_confidences is not None and (
+                        joint_index >= len(person_confidences)
+                        or person_confidences[joint_index] < KPT_CONF_TH
+                    ):
+                        continue
+                    x, y = person_keypoints[joint_index]
+                    point = (round(float(x)), round(float(y)))
+                    cv2.circle(frame, point, 5, color, -1)
+                    cv2.putText(
+                        frame, label, (point[0] + 5, point[1] - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1,
+                    )
 
             for seat, state, detected in zip(seats, states, seat_detections):
                 state.update(detected, now,

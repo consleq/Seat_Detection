@@ -6,7 +6,7 @@ import numpy as np
 
 
 KPT_CONF_TH = 0.4
-STAND_KNEE_ANGLE = 120
+STAND_KNEE_ANGLE = 160
 STAND_THIGH_RATIO = 0.8
 STAND_PERSON_CHAIR_HEIGHT_RATIO = 1.5
 STAND_HIP_CHAIR_HEIGHT_RATIO = 0.55
@@ -211,7 +211,7 @@ def run_standalone_demo():
             if not ret:
                 raise RuntimeError("無法讀取畫面")
 
-            det_result = det_model(frame, classes=[56], conf=0.35, verbose=False)[0]
+            det_result = det_model(frame, classes=[0], conf=0.35, verbose=False)[0]
             pose_result = pose_model(frame, conf=0.4, verbose=False)[0]
             chair_boxes = (
                 det_result.boxes.xyxy.cpu().numpy()
