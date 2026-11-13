@@ -10,9 +10,9 @@ STAND_KNEE_ANGLE = 160
 STAND_THIGH_RATIO = 0.8
 STAND_PERSON_CHAIR_HEIGHT_RATIO = 1.5
 STAND_HIP_CHAIR_HEIGHT_RATIO = 0.55
+# 脖子到膝蓋距離 / 脖子到髖部距離 >= 此值視為站姿（坐姿約 1.0~1.3，站姿約 1.8~2.0）
+STAND_NECK_KNEE_RATIO = 1.8
 CHEST_KEYPOINT_CONF = 0.4
-# 胸口高於座位 ROI 上緣超過「ROI 高度 x 此比例」時視為站姿
-CHEST_ABOVE_SEAT_RATIO = 0.25
 IOU_THRESHOLD = 0.25
 
 
@@ -41,21 +41,66 @@ def joint_angle(a, b, c):
     return float(np.degrees(np.arccos(cos)))
 
 
-def is_standing(kpts, conf, person_box=None, chair_box=None):
+def is_standing_by_neck_knee(kpts, conf, ratio_th=STAND_NECK_KNEE_RATIO):
+    """以脖子到膝蓋的距離判斷站姿。
+
+    脖子取左右肩中點。坐姿時膝蓋與髖部約同高，脖子到膝蓋的距離
+    約等於軀幹長；站姿時則約為軀幹長加大腿長。
+    以「脖子到膝蓋距離 / 脖子到髖部距離」正規化，避免受遠近影響。
+    任一側膝蓋達門檻即視為站姿；關節點不可信時回傳 False。
+    """
+
+    def ok(index):
+        return conf is None or conf[index] >= KPT_CONF_TH
+
+    if len(kpts) <= 14 or not (ok(5) and ok(6)):
+        return False
+    neck = (np.array(kpts[5], dtype=float) + np.array(kpts[6], dtype=float)) / 2
+
+    visible_hips = [np.array(kpts[h], dtype=float) for h in (11, 12) if ok(h)]
+    if not visible_hips:
+        return False
+    torso = np.linalg.norm(np.mean(visible_hips, axis=0) - neck)
+    if torso <= 0:
+        return False
+
+    for knee in (13, 14):
+        if not ok(knee):
+            continue
+        neck_knee = np.linalg.norm(np.array(kpts[knee], dtype=float) - neck)
+        if neck_knee / torso >= ratio_th:
+            return True
+    return False
+
+
+def is_standing(kpts, conf, person_box=None, chair_box=None, chest_outside=False):
     """依關節點判斷站姿；腳踝不可見時可參考附近椅子的相對高度。"""
 
     def ok(index):
         return conf is None or conf[index] >= KPT_CONF_TH
 
     sides = ((11, 13, 15, 5), (12, 14, 16, 6))
-    for hip, knee, ankle, shoulder in sides:
+
+    # 1. 膝蓋角度(hip, knee, ankle)：任一側腿成一直線才進入第 2 步確認
+    #    （坐著把腿伸直時角度也會成一直線，所以不能單憑角度判定站姿）
+    leg_straight = any(
+        ok(hip) and ok(knee) and ok(ankle)
+        and joint_angle(kpts[hip], kpts[knee], kpts[ankle]) >= STAND_KNEE_ANGLE
+        for hip, knee, ankle, _ in sides
+    )
+
+    # 2. 脖子到膝蓋 / 脖子到髖部距離比
+    if leg_straight and is_standing_by_neck_knee(kpts, conf):
+        return True
+
+    # 3. 胸口位置(胸口是否不在對應的座位 ROI 內，由呼叫端算好傳入)
+    if chest_outside:
+        return True
+
+    # 4. 大腿與軀幹比例
+    for hip, knee, _, shoulder in sides:
         if not (ok(hip) and ok(knee)):
             continue
-        # 以關節角度(hip, knee, ankle)為第一判斷條件
-        if ok(ankle):
-            if joint_angle(kpts[hip], kpts[knee], kpts[ankle]) >= STAND_KNEE_ANGLE:
-                return True
-        # 若腳踝不可見，則以大腿與軀幹比例為第二判斷條件
         if ok(shoulder):
             torso = abs(kpts[hip][1] - kpts[shoulder][1])
             thigh_v = kpts[knee][1] - kpts[hip][1]
@@ -122,11 +167,12 @@ def seat_box(points):
     return (x1, y1, x2, y2)
 
 
-def chest_above_seat(chest, box):
-    """胸口明顯高於座位 ROI 上緣時回傳 True（站姿）。"""
+def chest_outside_seat(chest, box):
+    """胸口不在對應座位 ROI 內時回傳 True（站姿）。胸口不可信時回傳 False。"""
     if chest is None:
         return False
-    return chest[1] < box[1] - (box[3] - box[1]) * CHEST_ABOVE_SEAT_RATIO
+    x, y = chest
+    return not (box[0] <= x <= box[2] and box[1] <= y <= box[3])
 
 
 def evaluate_seat_occupancy(seats, boxes, keypoints, confidences):
@@ -153,10 +199,14 @@ def evaluate_seat_occupancy(seats, boxes, keypoints, confidences):
             confidences[index]
             if confidences is not None and index < len(confidences) else None
         )
-        standing.append(
-            (related_seat is not None and chest_above_seat(chest, related_seat))
-            or (len(kpts) > 16 and is_standing(kpts, conf, person_box, related_seat))
-        )
+        chest_out = related_seat is not None and chest_outside_seat(chest, related_seat)
+        if len(kpts) > 16:
+            standing.append(
+                is_standing(kpts, conf, person_box, related_seat, chest_out)
+            )
+        else:
+            # 關節點不足時只能靠胸口位置判斷
+            standing.append(chest_out)
 
     # 3. 坐姿的人與座位 ROI 計算 IoU, 取最大且超過門檻的座位
     detected = [False] * len(seats)
