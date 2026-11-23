@@ -9,6 +9,7 @@
 - OpenCV `5.0.0.93`（套件名稱為 `opencv-python`）
 - Ultralytics `8.4.198`
 - 姿勢模型 `yolov8n-pose.pt`
+- 椅子偵測模型 `yolov8n.pt`
 
 在專案資料夾開啟 PowerShell，建立虛擬環境並安裝套件。
 
@@ -23,6 +24,8 @@ python -m pip install opencv-python==5.0.0.93 ultralytics==8.4.198
 1. 使用 Iriun Webcam 時，先連接手機與電腦，確認電腦端看得到手機畫面。需用到鏡頭時，電腦端應用程式也要開著，不能關。可執行 `python camera_test.py` 測試影格，按 `Q` 結束。
 2. 執行 `python seat_selector.py`。在快照上用滑鼠左鍵框選各座位。`U` 刪除最後一框，`R` 更新快照，`S` 將座位存到 `seats.json`，`Q` 離開。
 3. 關閉框選視窗後執行 `python main.py`。畫面上紅色表示占用、綠色表示空位、黃色表示確認中。按 `Q` 結束。
+
+青色 `Chair` 框顯示即時偵測到的椅子與模型信心分數。空位統計仍以 `seats.json` 的座位範圍為準。椅子偵測的信心門檻預設為 `0.35`，可用 `python main.py --chair-conf 0.45` 調整。若模型放在其他位置，可用 `--chair-model` 指定檔案路徑。
 
 Iriun 相機預設使用編號 `1`。若要更換相機，修改 `seat_selector.py` 的 `CAMERA_ID`，`main.py` 會共用此設定。`camera_test.py` 的相機編號需在該檔案內另行修改。
 

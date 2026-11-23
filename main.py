@@ -1,4 +1,4 @@
-"""固定座位 ROI + YOLO 姿勢偵測；姿勢判斷集中在 pose_seat_detection.py
+"""固定座位 ROI、YOLO 姿勢偵測與即時椅子框預覽。
 
 流程: 1. 辨識出所有人 2. 由胸口高度及姿勢關節排除站姿 3. 坐姿的人以 ROI 的 IoU 決定座位
 
@@ -39,6 +39,8 @@ def parse_args():
                         default=OUTPUT_PATH)
     parser.add_argument("--model", default="yolov8n-pose.pt", help="YOLO 姿勢模型檔案")
     parser.add_argument("--conf", type=float, default=0.4, help="人體偵測信心門檻")
+    parser.add_argument("--chair-model", default="yolov8n.pt", help="YOLO 椅子物件偵測模型檔案")
+    parser.add_argument("--chair-conf", type=float, default=0.35, help="椅子偵測信心門檻")
     parser.add_argument("--occupy-seconds", type=float, default=2.0)
     parser.add_argument("--empty-seconds", type=float, default=5.0)
     args = parser.parse_args()
@@ -46,6 +48,8 @@ def parse_args():
     # 拒絕超出範圍的數值, 以及 NaN 或無限大
     if not math.isfinite(args.conf) or not 0 < args.conf <= 1:
         parser.error("--conf 必須大於 0 且不超過 1。")
+    if not math.isfinite(args.chair_conf) or not 0 < args.chair_conf <= 1:
+        parser.error("--chair-conf 必須大於 0 且不超過 1。")
     for name in ("occupy_seconds", "empty_seconds"):
         value = getattr(args, name)
         if not math.isfinite(value) or value < 0:
@@ -70,13 +74,22 @@ def main():
     if not seats:
         raise ValueError("尚未設定座位，請先執行 python seat_selector.py，框選後按 S 儲存。")
 
-    # 2. 座位設定有效後才載入 YOLO 姿勢模型
+    # 2. 座位設定有效後才載入 YOLO 模型
     from ultralytics import YOLO
 
     print(f"載入模型 {args.model}（首次使用且本機沒有檔案時，可能需要下載）。")
     model = YOLO(args.model)
     if model.task != "pose" or model.names.get(0) != "person":
         raise ValueError("請使用 class 0 為 person 的 YOLO 姿勢模型，例如 yolov8n-pose.pt。")
+    print(f"載入椅子偵測模型 {args.chair_model}（首次使用且本機沒有檔案時，可能需要下載）。")
+    chair_model = YOLO(args.chair_model)
+    if chair_model.task != "detect":
+        raise ValueError("請使用支援 chair 類別的 YOLO 物件偵測模型，例如 yolov8n.pt。")
+    chair_class = next(
+        (class_id for class_id, name in chair_model.names.items() if name == "chair"), None
+    )
+    if chair_class is None:
+        raise ValueError("椅子偵測模型缺少 chair 類別。")
     # 3. 透過 Windows DirectShow 開啟與框選工具相同編號的相機
     cap = cv2.VideoCapture(CAMERA_ID, cv2.CAP_DSHOW)
     try:
@@ -100,6 +113,9 @@ def main():
             # 5. 在完整畫面偵測人體與姿勢, classes=[0] 限定 person 類別
             # 回傳結果是清單, 單張畫面取第 0 筆
             result = model(frame, classes=[0], conf=args.conf, verbose=False)[0]
+            chair_result = chair_model(
+                frame, classes=[chair_class], conf=args.chair_conf, verbose=False
+            )[0]
             # xyxy 為 [左, 上, 右, 下], 轉到 CPU 後再轉成 Python 清單
             boxes = [] if result.boxes is None else result.boxes.xyxy.cpu().tolist()
             keypoints = ( # 關節點座標, 轉到 CPU 後再轉成 Python 清單
@@ -116,6 +132,16 @@ def main():
                 seats, boxes, keypoints, confidences
             )
             now = time.monotonic()
+            # 青色框顯示本影格偵測到的椅子，座位狀態仍使用已設定的 ROI。
+            if chair_result.boxes is not None:
+                chair_boxes = chair_result.boxes.xyxy.cpu().tolist()
+                chair_scores = chair_result.boxes.conf.cpu().tolist()
+                for box, score in zip(chair_boxes, chair_scores):
+                    x1, y1, x2, y2 = map(int, box)
+                    color = (255, 255, 0)
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 1)
+                    cv2.putText(frame, f"Chair {score:.0%}", (x1 + 3, max(12, y1 + 14)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
             # 人體外框: 灰色細框為站姿(已排除), 藍框為坐姿, 僅供檢查偵測是否正確
             for box, is_stand in zip(boxes, standing):
                 x1, y1, x2, y2 = map(int, box)
