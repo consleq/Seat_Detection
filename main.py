@@ -16,6 +16,7 @@ import time
 import cv2
 
 # 共用相機編號, 設定檔位置和座位驗證函式, 匯入時不會啟動框選視窗
+from firebase_sync import init_firebase, upload_seats, update_status, reset_all
 from seat_selector import CAMERA_ID, OUTPUT_PATH, load_seats
 from pose_seat_detection import KPT_CONF_TH, SeatState, evaluate_seat_occupancy
 
@@ -73,6 +74,8 @@ def main():
     seats = load_seats(args.seats, width, height)
     if not seats:
         raise ValueError("尚未設定座位，請先執行 python seat_selector.py，框選後按 S 儲存。")
+    rest = init_firebase()
+    upload_seats(rest, config)
 
     # 2. 座位設定有效後才載入 YOLO 模型
     from ultralytics import YOLO
@@ -182,6 +185,7 @@ def main():
             for seat, state, detected in zip(seats, states, seat_detections):
                 state.update(detected, now,
                              args.occupy_seconds, args.empty_seconds)
+                update_status(seat["id"], state.occupied)
                 # 顯示確認後的狀態: 黃色待確認, 紅色占用, 綠色空位
                 if state.occupied is None:
                     label, color = "Checking", (0, 200, 255)
@@ -215,6 +219,7 @@ def main():
         # 即使讀取或辨識發生例外, 也會釋放相機並關閉視窗
         cap.release()
         cv2.destroyAllWindows()
+        reset_all([s["id"] for s in seats])
 
 
 if __name__ == "__main__":
