@@ -1,6 +1,6 @@
 # 餐廳空位回報
 
-使用固定相機拍攝座位，以 YOLO 偵測人體，根據人體外框與座位範圍的重疊程度顯示空位數。
+使用固定相機拍攝座位，以 YOLO 即時偵測椅子和人體，並顯示空位數。
 
 ## 環境版本
 
@@ -8,27 +8,29 @@
 - Python `3.14.3`
 - OpenCV `5.0.0.93`（套件名稱為 `opencv-python`）
 - Ultralytics `8.4.198`
+- firebase-admin `7.8.0`
 - 姿勢模型 `yolov8n-pose.pt`
 - 椅子偵測模型 `yolov8n.pt`
 
 在專案資料夾開啟 PowerShell，建立虛擬環境並安裝套件。
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install opencv-python==5.0.0.93 ultralytics==8.4.198
+python -m pip install -r requirements.txt
 ```
 
 ## 基本操作
 
 1. 使用 Iriun Webcam 時，先連接手機與電腦，確認電腦端看得到手機畫面。需用到鏡頭時，電腦端應用程式也要開著，不能關。可執行 `python camera_test.py` 測試影格，按 `Q` 結束。
-2. 執行 `python seat_selector.py`。在快照上用滑鼠左鍵框選各座位。`U` 刪除最後一框，`R` 更新快照，`S` 將座位存到 `seats.json`，`Q` 離開。
-3. 關閉框選視窗後執行 `python main.py`。畫面上紅色表示占用、綠色表示空位、黃色表示確認中。按 `Q` 結束。
+2. 直接執行 `python main.py`。辨識從零個座位開始，偵測到椅子後才加入統計。紅色表示占用、綠色表示空位、黃色表示確認中。按 `Q` 或 Esc 結束。
 
-青色 `Chair` 框顯示即時偵測到的椅子與模型信心分數。空位統計仍以 `seats.json` 的座位範圍為準。椅子偵測的信心門檻預設為 `0.35`，可用 `python main.py --chair-conf 0.45` 調整。若模型放在其他位置，可用 `--chair-model` 指定檔案路徑。
+即時座位會寫入專案目錄的 `temp_seats.json`，包含影像尺寸、座位 ID、四角座標和狀態。短暫漏偵測時會沿用上一個椅框。連續 3 秒都看不到椅子、也沒有配對到坐姿的人時，移除該座位。椅子偵測的信心門檻預設為 `0.35`，可用 `python main.py --chair-conf 0.45` 調整。若模型放在其他位置，可用 `--chair-model` 指定檔案路徑。
+
+若要使用固定座位，執行 `python seat_selector.py` 手動框選，按 `S` 儲存到 `seats.json`，再執行 `python main.py --seats seats.json`。
 
 Iriun 相機預設使用編號 `1`。若要更換相機，修改 `seat_selector.py` 的 `CAMERA_ID`，`main.py` 會共用此設定。`camera_test.py` 的相機編號需在該檔案內另行修改。
 
-`main.py` 載入 YOLO 姿勢模型； `pose_seat_detection.py` 的 `evaluate_seat_occupancy` 彙整多個判斷邏輯，包含：1. 辨識出所有人；2. 由胸口高度（左右肩中點，高於座位 ROI 上緣超過 ROI 高度 25% 視為站姿）及姿勢關節（`is_standing`）先排除站姿的人；3. 坐姿的人以人體框與座位 ROI 的 IoU 決定坐哪張椅子（IoU ≥ `IOU_THRESHOLD`）。座位有人持續 2 秒時標示占用，連續 5 秒無人時標示空位。畫面中灰色細框為站姿、藍框為坐姿，紫色點表示胸口位置。
+站姿的第一項檢查是人體是否移動。程式比較同一人在約半秒內的外框中心位移，達人體框平均高度的 12% 時標示 `Moving`，直接排除占用判定。可用 `--movement-threshold` 調整這個比例。其餘人員再依關節和胸口位置判斷站姿。即時椅框的胸口檢查範圍會往上延伸半個椅框高度。坐姿人員依人體框覆蓋椅框的比例分配座位，至少覆蓋 25% 才會計入。預設連續有人 2 秒確認占用，連續無人 5 秒確認空位。
 
-檔案多和 main 分支差不多，較大的程式碼構造差別是 pose_seat_detection.py 及 main.py 被分成多個函式，且放入新增的判斷邏輯。
+有 Firebase 憑證時，即時模式會把本次執行的座位同步到 `restaurants/test/seats`，以 `live_` 開頭的文件 ID 識別，正常結束時會移除本次的即時文件。缺少憑證時會使用本機辨識，也可加上 `--no-firebase`。
+
+Firestore 會等每張椅子的框連續穩定 3 秒後才新增文件。已上傳的座標會忽略小幅抖動，有明顯變化且新位置穩定 3 秒才更新。占用狀態仍在確認後同步。連續 15 秒看不到椅子、也沒有配對到坐姿的人，才在雲端移除該座位。這些條件只用於雲端同步，本機 `temp_seats.json` 仍記錄即時結果。

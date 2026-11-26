@@ -64,7 +64,7 @@ def is_standing_by_neck_knee(kpts, conf, ratio_th=STAND_NECK_KNEE_RATIO):
     """
 
     def ok(index):
-        return conf is None or conf[index] >= KPT_CONF_TH
+        return conf is None or (index < len(conf) and conf[index] >= KPT_CONF_TH)
 
     if len(kpts) <= 14 or not (ok(5) and ok(6)):
         return False
@@ -86,15 +86,21 @@ def is_standing_by_neck_knee(kpts, conf, ratio_th=STAND_NECK_KNEE_RATIO):
     return False
 
 
-def is_standing(kpts, conf, person_box=None, chair_box=None, chest_outside=False):
-    """依膝蓋角度與距離比、胸口位置、大腿與軀幹比例判斷站姿。"""
+def is_standing(kpts, conf, person_box=None, chair_box=None, chest_outside=False, *, moving=False):
+    """先檢查移動，再依姿勢關節及胸口位置判斷站姿。"""
+
+    # 1. 正在移動的人直接判為站姿。
+    if moving:
+        return True
+    if len(kpts) <= 16:
+        return chest_outside
 
     def ok(index):
-        return conf is None or conf[index] >= KPT_CONF_TH
+        return conf is None or (index < len(conf) and conf[index] >= KPT_CONF_TH)
 
     sides = ((11, 13, 15, 5), (12, 14, 16, 6))
 
-    # 1. 膝蓋角度(hip, knee, ankle)：任一側腿成一直線才進入第 2 步確認
+    # 2. 膝蓋角度(hip, knee, ankle)：任一側腿成一直線才繼續確認距離比
     #    （坐著把腿伸直時角度也會成一直線，所以不能單憑角度判定站姿）
     leg_straight = any(
         ok(hip) and ok(knee) and ok(ankle)
@@ -102,15 +108,15 @@ def is_standing(kpts, conf, person_box=None, chair_box=None, chest_outside=False
         for hip, knee, ankle, _ in sides
     )
 
-    # 2. 脖子到膝蓋 / 脖子到髖部距離比
+    # 3. 脖子到膝蓋 / 脖子到髖部距離比
     if leg_straight and is_standing_by_neck_knee(kpts, conf):
         return True
 
-    # 3. 胸口位置(胸口是否不在對應的座位 ROI 內，由呼叫端算好傳入)
+    # 4. 胸口位置(胸口是否不在對應的座位 ROI 內，由呼叫端算好傳入)
     if chest_outside:
         return True
 
-    # 4. 大腿與軀幹比例
+    # 5. 大腿與軀幹比例
     for hip, knee, _, shoulder in sides:
         if not (ok(hip) and ok(knee)):
             continue
@@ -154,7 +160,7 @@ def seat_box(points):
     return (x1, y1, x2, y2)
 
 
-def chest_outside_seat(chest, box):
+def chest_outside_seat(chest, box, top_margin=0.0):
     """胸口不在對應座位 ROI 內時回傳 True（站姿）。胸口不可信時回傳 False。
 
     box 為 None 代表人體框與所有座位 ROI 都沒有重疊，胸口必然在 ROI 外。
@@ -164,11 +170,12 @@ def chest_outside_seat(chest, box):
     if box is None:
         return True
     x, y = chest
-    return not (box[0] <= x <= box[2] and box[1] <= y <= box[3])
+    top = box[1] - (box[3] - box[1]) * top_margin
+    return not (box[0] <= x <= box[2] and top <= y <= box[3])
 
 
-def evaluate_seat_occupancy(seats, boxes, keypoints, confidences):
-    """1. 辨識出所有人 2. 排除站姿 3. 坐姿的人以 IoU 決定坐哪張椅子。
+def evaluate_seat_occupancy(seats, boxes, keypoints, confidences, *, moving=None, chest_margin=0.0):
+    """排除站姿後，依人體框覆蓋的座位面積判斷占用。
 
     回傳 (chests, detected, standing):
     chests 每個人的胸口點或 None, detected 每個座位是否有人坐,
@@ -191,14 +198,11 @@ def evaluate_seat_occupancy(seats, boxes, keypoints, confidences):
             confidences[index]
             if confidences is not None and index < len(confidences) else None
         )
-        chest_out = chest_outside_seat(chest, related_seat)
-        if len(kpts) > 16:
-            standing.append(
-                is_standing(kpts, conf, person_box, related_seat, chest_out)
-            )
-        else:
-            # 關節點不足時只能靠胸口位置判斷
-            standing.append(chest_out)
+        chest_out = chest_outside_seat(chest, related_seat, chest_margin)
+        standing.append(is_standing(
+            kpts, conf, person_box, related_seat, chest_out,
+            moving=moving is not None and moving[index],
+        ))
 
     # 3. 坐姿的人與座位 ROI 計算「交集面積 / 座位面積」, 取最大且超過門檻的座位
     detected = [False] * len(seats)

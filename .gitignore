@@ -1,6 +1,8 @@
 .venv
 __pycache__/
 seats.json
+temp_seats.json
+temp_seats.json.tmp
 Seat ROI Selector.png
 pose_seat_detection_backup.py
 backup_before_flow/
